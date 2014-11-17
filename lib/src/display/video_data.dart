@@ -26,20 +26,13 @@ class VideoData {
   static Future<VideoData> load(String url, {
         bool mp4: true, bool ogg: true, bool webm: true}) {
 
-    var video = new VideoElement();
+    VideoElement video;
+    var onCanPlaySubscription;
+    var onErrorSubscription;
+
     var videoUrls = _getOptimalVideoUrls(url, mp4, ogg, webm);
     var loadCompleter = new Completer<VideoData>();
-
-    // necessary to get videoWidth and videoHeight
-    video.style.display = 'none';
-    html.document.body.children.add(video);
-
-    if (videoUrls.length == 0) {
-      loadCompleter.completeError(new StateError("No url provided."));
-    }
-
-    StreamSubscription onCanPlaySubscription;
-    StreamSubscription onErrorSubscription;
+    print("video path : ${videoUrls}");
 
     onCanPlay(event) {
       onCanPlaySubscription.cancel();
@@ -53,23 +46,43 @@ class VideoData {
       loadCompleter.complete(videoData);
     };
 
-    onError(event) {
-      if (videoUrls.length > 0) {
-        video.src = videoUrls.removeAt(0);
-        video.load();
-      } else {
-        onCanPlaySubscription.cancel();
-        onErrorSubscription.cancel();
+    onData(HttpRequest request) {
+      FileReader reader = new FileReader();
+      reader.readAsDataUrl(request.response);
 
-        loadCompleter.completeError(new StateError("Failed to load video."));
-      }
+      reader.onLoadEnd.first.then((e){
+
+        if(reader.readyState != FileReader.DONE) {
+          throw 'Error while reading ${url}';
+        }
+
+        video = new VideoElement();
+
+        onCanPlaySubscription = video.onCanPlayThrough.listen(onCanPlay);
+        onErrorSubscription = video.onError.listen((_){
+          loadCompleter.completeError(new StateError("Failed to create video with data."));
+        });
+
+        video.src = reader.result;
+        video.load();
+      });
     };
 
-    onCanPlaySubscription = video.onCanPlayThrough.listen(onCanPlay);
-    onErrorSubscription = video.onError.listen(onError);
-
-    video.src = videoUrls.removeAt(0);
-    video.load();
+    onError(event) {
+      print("+ error grabing try next : ${event}");
+      if (videoUrls.length > 0) {
+        print("+ grab ${videoUrls[0]}");
+        HttpRequest.request(videoUrls.removeAt(0), responseType: 'blob')
+          .then(onData)
+          .catchError(onError);
+      } else {
+        loadCompleter.completeError(new StateError("Failed to load uri."));
+      }
+    };
+    print("+ grab ${videoUrls[0]}");
+    HttpRequest.request(videoUrls.removeAt(0), responseType: 'blob')
+      .then(onData)
+      .catchError(onError);
 
     return loadCompleter.future;
   }
